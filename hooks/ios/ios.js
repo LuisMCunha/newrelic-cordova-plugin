@@ -4,7 +4,6 @@ var path = require("path");
 var newrelic = require("../newrelic");
 var ScriptPhase = require("./script-phase");
 
-
 /**
  * @desc iOS Object to remove and add New Relic build scripts to the xCode Project.
  * @type {{scriptTitle: string,

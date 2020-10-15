@@ -28,6 +28,7 @@ import zipfile
 import warnings
 import requests
 import tempfile
+import uuid
 from subprocess import call
 
 #Enable this to filter warnings
@@ -76,11 +77,29 @@ functionname = "";
 
 url = os.environ.get('DSYM_UPLOAD_URL', 'https://mobile-symbol-upload.newrelic.com')
 
+
+
+
+
+proc = subprocess.Popen(["file \"{}\"".format(a.dsymFilePath)],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+output, errors = proc.communicate()
+fileType = output.split(":")[-1]
+
 #Define the working directory. Delete it if it exists previously and recreate it.
-workDir = tempfile.mkdtemp()
+dsymDir,filename = os.path.split(a.dsymFilePath)
+workDir = os.path.join(dsymDir, "tmp")
+try:
+    os.stat(workDir)
+    os.rmdir(workDir)
+    os.mkdir(workDir)
+except:
+    os.mkdir(workDir)
+
 
 #Create an empty zip file into which we will add all the map files
-nrZipFile = zipfile.ZipFile('nrdSYM.zip', 'w', zipfile.ZIP_DEFLATED)
+zipPath, _ = os.path.split(workDir)
+nrZipFileName = os.path.join(zipPath, 'nrdSYM' + str(uuid.uuid4()) + '.zip')
+nrZipFile = zipfile.ZipFile(nrZipFileName, 'w', zipfile.ZIP_DEFLATED)
 
 ###---------------------------------------###
 ###       dSYM Processing Methods         ###
@@ -148,7 +167,7 @@ def processDsymFile(dsymFile, workDir):
 	#get the architectures and uuids from the dsym file
 	#massage the uuid to be what we expect then put them into a dict
 	#uuid : architecture
-	proc = subprocess.Popen(["symbols -uuid {}".format(dsymFile)], stdout=subprocess.PIPE, shell=True)
+	proc = subprocess.Popen(["symbols -uuid \"{}\"".format(dsymFile)], stdout=subprocess.PIPE, shell=True)
 	for line in iter(proc.stdout.readline, ''):
 	   splitLine = line.strip().split();
 	   uuidDict[splitLine[0].lower().replace('-', '')] = splitLine[1]
@@ -161,7 +180,7 @@ def processDsymFile(dsymFile, workDir):
 		file = open("{0}/{1}.map".format(workDir, key,"w"),"w+")
 		file.write("# uuid {}\r\n".format(key.upper(),"w"))
 		file.write("# architecture {}\r\n".format(uuidDict[key], "w"))
-		proc = subprocess.Popen(["symbols -arch {arch} {filepath}".format(arch=uuidDict[key], filepath=dsymFile)], stdout=tmpwrite, shell=True)
+		proc = subprocess.Popen(["symbols -arch {arch} \"{filepath}\"".format(arch=uuidDict[key], filepath=dsymFile)], stdout=tmpwrite, shell=True)
 		proc.wait()
 		tmpwrite.close()
 
@@ -194,8 +213,7 @@ def findAllDsymsInDir(directory):
 	dsyms = []
 	for root, dirs, files in os.walk(directory):
 		for file in files:
-			file = file.replace(' ','\ ')
-			proc = subprocess.Popen(["file {}".format(os.path.join(root, file))],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
+			proc = subprocess.Popen(["file \"{}\"".format(os.path.join(root, file))],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
 			output, errors = proc.communicate()
 			fileType = output.split(":")[-1]
 			if 'Mach-O' in fileType:
@@ -209,7 +227,8 @@ def unzipFile(zipFile, workDir):
 			# skip directories
 			if not filename or ".plist" in filename or ".bin" in filename or filename.startswith('.'):
 				continue
-	        # copy file (taken from zipfile's extract)
+			filename = filename + str(uuid.uuid4())
+	     		# copy file (taken from zipfile's extract)
 			source = zip_file.open(member)
 			target = file(os.path.join(workDir, filename), "w")
 			with source, target:
@@ -221,11 +240,6 @@ def unzipFile(zipFile, workDir):
 ###        Process the dSYMs              ###
 ###---------------------------------------###
 
-
-#Take the argument passed into the script and figure out if it's a zip, directory or dSYM file
-proc = subprocess.Popen(["file {}".format(a.dsymFilePath)],stdout=subprocess.PIPE,stderr=subprocess.PIPE, shell=True)
-output, errors = proc.communicate()
-fileType = output.split(":")[-1]
 
 #Process any found dSYM file(s) and create nrdSYM.zip from them
 if 'Zip' in fileType:
@@ -246,13 +260,13 @@ nrZipFile.close()
 ###        Upload nrdSYM.zip              ###
 ###---------------------------------------###
 
-files= { 'upload': open('./nrdSYM.zip','rb') }
+files= { 'upload': open(nrZipFileName,'rb') }
 headers= { 'X-APP-LICENSE-KEY' : a.appLicenseKey }
 
 
 r = requests.post("/".join((url,"map")), files=files, headers=headers)
 if r.status_code == 201:
-	os.remove('./nrdSYM.zip')
+	os.remove(nrZipFileName)
 
 print r.status_code
 
